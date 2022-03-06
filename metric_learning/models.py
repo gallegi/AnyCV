@@ -124,7 +124,7 @@ class OrthogonalFusion(nn.Module):
         return f_fused  
 
 class SimpleArcFaceModel(nn.Module):
-    def __init__def __init__(self, backbone_name, backbone_pretrained=None, 
+    def __init__(self, backbone_name, backbone_pretrained=None, 
                 n_classes=10000, embedding_size=512, margin=0.5, scale=64,
                 sub_center=False, adaptive_margin=False, arcface_m_x = 0.45,
                 arcface_m_y = 0.05, label_frequency=None):
@@ -201,7 +201,7 @@ class DOLGArcFaceModel(SimpleArcFaceModel):
                 sub_center=False, adaptive_margin=False, arcface_m_x = 0.45,
                 arcface_m_y = 0.05, label_frequency=None,
                 dilations=[6,12,18]):
-        super(DOLGArcFaceModel, self).__init__(backnone_name, backbone_pretrained,
+        super(DOLGArcFaceModel, self).__init__(backbone_name, backbone_pretrained,
                                                 n_classes, adaptive_margin, arcface_m_x,
                                                 arcface_m_y, label_frequency)
         self.n_classes = n_classes
