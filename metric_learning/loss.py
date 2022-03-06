@@ -5,7 +5,9 @@ from torch import nn
 import torch.nn.functional as F
 
 class ArcFaceLoss(nn.Module):
-    def __init__(self, s=45.0, m=0.1, weight=None, reduction="mean",class_weights_norm=None ):
+    def __init__(self, s=45.0, m=0.1, weight=None, 
+                reduction="mean",class_weights_norm=None,
+                device='cuda:0'):
         super().__init__()
 
         self.weight = weight
@@ -15,7 +17,7 @@ class ArcFaceLoss(nn.Module):
         self.crit = nn.CrossEntropyLoss(reduction="none")   
         
         if s is None:
-            self.s = torch.nn.Parameter(torch.tensor([45.], requires_grad=True, device='cuda'))
+            self.s = torch.nn.Parameter(torch.tensor([45.], requires_grad=True, device=device))
         else:
             self.s = s
 
@@ -71,20 +73,21 @@ class DenseCrossEntropy(nn.Module):
         return loss.mean()
 
 class ArcFaceLossAdaptiveMargin(nn.Module):
-    def __init__(self, margins, n_classes, s=30.0):
+    def __init__(self, margins, n_classes, s=30.0, device='cuda:0'):
         super().__init__()
         self.crit = DenseCrossEntropy()
         self.s = s
         self.margins = margins
         self.out_dim =n_classes
+        self.device = device
             
     def forward(self, logits, labels):
         ms = []
         ms = self.margins[labels.cpu().numpy()]
-        cos_m = torch.from_numpy(np.cos(ms)).float().cuda()
-        sin_m = torch.from_numpy(np.sin(ms)).float().cuda()
-        th = torch.from_numpy(np.cos(math.pi - ms)).float().cuda()
-        mm = torch.from_numpy(np.sin(math.pi - ms) * ms).float().cuda()
+        cos_m = torch.from_numpy(np.cos(ms)).float().to(self.device)
+        sin_m = torch.from_numpy(np.sin(ms)).float().to(self.device)
+        th = torch.from_numpy(np.cos(math.pi - ms)).float().to(self.device)
+        mm = torch.from_numpy(np.sin(math.pi - ms) * ms).float().to(self.device)
         labels = F.one_hot(labels, self.out_dim).float()
         logits = logits.float()
         cosine = logits

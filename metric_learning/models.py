@@ -127,7 +127,7 @@ class SimpleArcFaceModel(nn.Module):
     def __init__(self, backbone_name, backbone_pretrained=None, 
                 n_classes=10000, embedding_size=512, global_pool='gem', margin=0.5, scale=64,
                 sub_center=False, adaptive_margin=False, arcface_m_x = 0.45,
-                arcface_m_y = 0.05, label_frequency=None):
+                arcface_m_y = 0.05, label_frequency=None, device='cuda:0'):
         super(SimpleArcFaceModel, self).__init__()
         self.n_classes = n_classes
         
@@ -162,16 +162,22 @@ class SimpleArcFaceModel(nn.Module):
             self.head = ArcMarginProduct(self.embedding_size, self.n_classes)
 
         if adaptive_margin:
+            if label_frequency is None:
+                raise ValueError('when adaptive_margin is True, please parse label_frequency of the dataset')
             tmp = np.sqrt(1 / np.sqrt(label_frequency.sort_index().values))
             init_margins = (tmp - tmp.min()) / (tmp.max() - tmp.min()) * arcface_m_x + arcface_m_y
             self.loss_fn = ArcFaceLossAdaptiveMargin(margins=init_margins,
-                                                        n_classes=n_classes, s=scale)
+                                                        n_classes=n_classes, s=scale,
+                                                        device=device)
         else:
-            self.loss_fn = ArcFaceLoss(scale, margin)
+            self.loss_fn = ArcFaceLoss(scale, margin, device=device)
+
+        # to device
+        self.device = device
+        self.to(self.device)
         
     def forward(self, batch):
         x = batch['input']
-        dev = x.device
         batch_size = x.shape[0]
 
         features = self.backbone(x)
@@ -193,7 +199,7 @@ class SimpleArcFaceModel(nn.Module):
             target = batch['target']
         else:
             target = None
-            loss = torch.zeros((1),device=dev)
+            loss = torch.zeros((1),device=self.device)
         return {'loss': loss, "target": target, "preds_conf":preds_conf,'preds_cls':preds_cls,
                 'embeddings': embeddings
                 }
@@ -203,11 +209,11 @@ class DOLGArcFaceModel(SimpleArcFaceModel):
                 n_classes=10000, embedding_size=512, margin=0.5, scale=64,
                 sub_center=False, adaptive_margin=False, arcface_m_x = 0.45,
                 arcface_m_y = 0.05, label_frequency=None,
-                dilations=[6,12,18]):
+                dilations=[6,12,18], device='cuda:0'):
         super(DOLGArcFaceModel, self).__init__(backbone_name, backbone_pretrained,
                                                 n_classes, embedding_size, margin, scale, sub_center, adaptive_margin,
                                                  adaptive_margin, arcface_m_x,
-                                                arcface_m_y, label_frequency)
+                                                arcface_m_y, label_frequency, device)
                
         self.n_classes = n_classes
         if backbone_pretrained is not None:
@@ -243,11 +249,13 @@ class DOLGArcFaceModel(SimpleArcFaceModel):
         self.act_g =  nn.SiLU(inplace=True)
         self.attention2d = SpatialAttention2d(feature_dim_l_g)
         self.fusion = OrthogonalFusion()
+
+        # to device
+        self.device = device
+        self.to(self.device)
         
     def forward(self, batch):
         x = batch['input']
-        dev = x.device
-        batch_size = x.shape[0]
 
         x = self.backbone(x)
         
@@ -280,7 +288,7 @@ class DOLGArcFaceModel(SimpleArcFaceModel):
             target = batch['target']
         else:
             target = None
-            loss = torch.zeros((1),device=dev)
+            loss = torch.zeros((1),device=self.device)
         return {'loss': loss, "target": target, "preds_conf":preds_conf,'preds_cls':preds_cls,
                 'embeddings': x_emb
                 }
