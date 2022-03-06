@@ -9,7 +9,6 @@ def get_configs():
     cfg.tensor_inp_shape = (512, 512, 3)
 
     cfg.global_pool = "gem"
-    cfg.n_classes = 1000
     cfg.embedding_size = 512
 
     # arcface
