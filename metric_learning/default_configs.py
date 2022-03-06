@@ -14,8 +14,8 @@ cfg.embedding_size = 512
 # arcface
 cfg.margin = 45
 cfg.scale = 0.3
-cfg.adaptive_margin = True
-cfg.sub_center = True
+cfg.adaptive_margin = False
+cfg.sub_center = False
 cfg.arcface_m_x = 0.45
 cfg.arcface_m_y = 0.05
 
