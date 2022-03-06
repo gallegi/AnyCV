@@ -10,7 +10,7 @@ class SingleTargetDataset(Dataset):
         self.augmentations = transforms
 
     def __len__(self):
-        return self.csv.shape[0]
+        return self.df.shape[0]
 
     def __getitem__(self, index):
         row = self.df.iloc[index]
