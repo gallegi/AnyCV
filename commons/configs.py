@@ -10,7 +10,7 @@ def get_default_configs():
     cfg.num_workers = 4
     cfg.base_lr = 5e-5
     cfg.warmup_factor = 10
-    cfg.num_epoch = 50
+    cfg.num_epochs = 50
     cfg.folds_to_run = [0]
     cfg.patience = 10
     cfg.seed = 67
