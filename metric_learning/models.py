@@ -212,8 +212,7 @@ class DOLGArcFaceModel(SimpleArcFaceModel):
                 dilations=[6,12,18], device='cuda:0'):
         super(DOLGArcFaceModel, self).__init__(backbone_name, backbone_pretrained,
                                                 n_classes, embedding_size, global_pool, margin, scale, 
-                                                sub_center, adaptive_margin,
-                                                 adaptive_margin, arcface_m_x,
+                                                sub_center, adaptive_margin, arcface_m_x,
                                                 arcface_m_y, label_frequency, device)
                
         self.n_classes = n_classes
