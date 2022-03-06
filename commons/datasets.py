@@ -5,7 +5,7 @@ from torch.utils.data import Dataset
 class SingleTargetDataset(Dataset):
     
     def __init__(self, df, label_col, transforms=None):
-        self.df = self.df.reset_index()
+        self.df = df.reset_index()
         self.label_col = label_col
         self.augmentations = transforms
 
