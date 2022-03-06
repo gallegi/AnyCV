@@ -1,6 +1,7 @@
 from commons.configs import get_default_configs
 import albumentations as A
 from albumentations.pytorch.transforms import ToTensorV2
+from types import SimpleNamespace
 
 cfg = get_default_configs()
 cfg.tensor_inp_shape = (512, 512, 3)

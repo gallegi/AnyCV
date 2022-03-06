@@ -92,3 +92,6 @@ def occumpy_mem(cuda_device):
     block_mem = max_mem - used
     x = torch.cuda.FloatTensor(256,1024,block_mem)
     del x
+
+def count_trainable_params(model):
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
