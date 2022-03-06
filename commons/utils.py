@@ -77,7 +77,7 @@ def save_progress(progress_dict, out_folder, out_folder_name, fold, show=False):
         plt.show()
 
     pd.DataFrame({'epoch':range(1, epochs), **progress_dict}).to_csv(os.path.join(out_folder, save_name+'.csv'), index=False)
-
+    plt.close()
     
 def check_mem(cuda_device):
     devices_info = os.popen('"/usr/bin/nvidia-smi" --query-gpu=memory.total,memory.used --format=csv,nounits,noheader').read().strip().split("\n")
