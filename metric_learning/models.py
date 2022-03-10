@@ -209,7 +209,7 @@ class SwinTrArcFaceModel(nn.Module):
                 n_classes=10000, embedding_size=512, global_pool='gem', margin=0.5, scale=64,
                 sub_center=False, adaptive_margin=False, arcface_m_x = 0.45,
                 arcface_m_y = 0.05, label_frequency=None, device='cuda:0'):
-        super(SimpleArcFaceModel, self).__init__()
+        super(SwinTrArcFaceModel, self).__init__()
         self.n_classes = n_classes
         
         if backbone_pretrained is not None:
@@ -373,6 +373,8 @@ class HybridSwinTransformer(nn.Module):
                 n_classes=10000, embedding_size=512, global_pool='gem', margin=0.5, scale=64,
                 sub_center=False, adaptive_margin=False, arcface_m_x = 0.45,
                 arcface_m_y = 0.05, label_frequency=None, freeze_backbone_head=False, device='cuda:0'):
+        
+        super(HybridSwinTransformer, self).__init__()
 
         self.backbone = timm.create_model(backbone_name, 
                                             pretrained=backbone_pretrained, 
@@ -393,7 +395,7 @@ class HybridSwinTransformer(nn.Module):
 
         if embedder_pretrained is not None:
             if type(embedder_pretrained) == bool:
-                embedder = timm.create_model(embedder_name, 
+                embedder = timm.create_model(embedder_name,
                                         pretrained=embedder_pretrained, 
                                         in_chans=3,
                                         features_only=True, out_indices=embedder_blocks)
