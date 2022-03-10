@@ -206,7 +206,7 @@ class SimpleArcFaceModel(nn.Module):
 
 class SwinTrArcFaceModel(nn.Module):
     def __init__(self, backbone_name, backbone_pretrained=None, 
-                n_classes=10000, embedding_size=512, global_pool='gem', margin=0.5, scale=64,
+                n_classes=10000, embedding_size=512, margin=0.5, scale=64,
                 sub_center=False, adaptive_margin=False, arcface_m_x = 0.45,
                 arcface_m_y = 0.05, label_frequency=None, device='cuda:0'):
         super(SwinTrArcFaceModel, self).__init__()
@@ -221,10 +221,6 @@ class SwinTrArcFaceModel(nn.Module):
                 self.backbone.load_state_dict(torch.load(backbone_pretrained))
                 print('Loaded pretrained model:', backbone_pretrained)
 
-        if global_pool == 'gem':
-            self.global_pool = GeM(p_trainable=True)
-        elif global_pool == 'avg':
-            self.global_pool = nn.AdaptiveAvgPool2d(1)
         self.embedding_size = embedding_size
 
         self.neck = nn.Sequential(
@@ -232,6 +228,7 @@ class SwinTrArcFaceModel(nn.Module):
                 nn.BatchNorm1d(self.embedding_size),
                 torch.nn.PReLU()
             )
+        self.backbone.head = nn.Identity()
 
         if sub_center:
             self.head = ArcMarginProduct_subcenter(self.embedding_size, self.n_classes)
