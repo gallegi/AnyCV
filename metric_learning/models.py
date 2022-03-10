@@ -4,7 +4,7 @@ from torch import nn
 import torch.nn.functional as F
 import timm
 import numpy as np
-
+from timm.models.vision_transformer_hybrid import HybridEmbed    
 from metric_learning.loss import ArcFaceLoss, ArcFaceLossAdaptiveMargin
 
 class ArcMarginProduct_subcenter(nn.Module):
@@ -136,7 +136,7 @@ class SimpleArcFaceModel(nn.Module):
                 self.backbone = timm.create_model(backbone_name, pretrained=backbone_pretrained,
                                                 features_only=True, num_classes=0,
                                                 global_pool='')
-            elif type(backbone_pretrained) == bool:
+            elif type(backbone_pretrained) == str:
                 self.backbone = timm.create_model(backbone_name, pretrained=False,
                                                 features_only=True, num_classes=0,
                                                 global_pool='')
@@ -204,6 +204,80 @@ class SimpleArcFaceModel(nn.Module):
                 'embeddings': embeddings
                 }
 
+class SwinTrArcFaceModel(nn.Module):
+    def __init__(self, backbone_name, backbone_pretrained=None, 
+                n_classes=10000, embedding_size=512, global_pool='gem', margin=0.5, scale=64,
+                sub_center=False, adaptive_margin=False, arcface_m_x = 0.45,
+                arcface_m_y = 0.05, label_frequency=None, device='cuda:0'):
+        super(SimpleArcFaceModel, self).__init__()
+        self.n_classes = n_classes
+        
+        if backbone_pretrained is not None:
+            if type(backbone_pretrained) == bool:
+                self.backbone = timm.create_model(backbone_name, pretrained=backbone_pretrained)
+            elif type(backbone_pretrained) == str:
+                self.backbone = timm.create_model(backbone_name, pretrained=False)
+        
+                self.backbone.load_state_dict(torch.load(backbone_pretrained))
+                print('Loaded pretrained model:', backbone_pretrained)
+
+        if global_pool == 'gem':
+            self.global_pool = GeM(p_trainable=True)
+        elif global_pool == 'avg':
+            self.global_pool = nn.AdaptiveAvgPool2d(1)
+        self.embedding_size = embedding_size
+
+        self.neck = nn.Sequential(
+                nn.Linear(self.backbone.head.in_features, self.embedding_size, bias=True),
+                nn.BatchNorm1d(self.embedding_size),
+                torch.nn.PReLU()
+            )
+
+        if sub_center:
+            self.head = ArcMarginProduct_subcenter(self.embedding_size, self.n_classes)
+        else:
+            self.head = ArcMarginProduct(self.embedding_size, self.n_classes)
+
+        if adaptive_margin:
+            if label_frequency is None:
+                raise ValueError('when adaptive_margin is True, please parse label_frequency of the dataset')
+            tmp = np.sqrt(1 / np.sqrt(label_frequency.sort_index().values))
+            init_margins = (tmp - tmp.min()) / (tmp.max() - tmp.min()) * arcface_m_x + arcface_m_y
+            self.loss_fn = ArcFaceLossAdaptiveMargin(margins=init_margins,
+                                                        n_classes=n_classes, s=scale,
+                                                        device=device)
+        else:
+            self.loss_fn = ArcFaceLoss(scale, margin, device=device)
+
+        # to device
+        self.device = device
+        self.to(self.device)
+        
+    def forward(self, batch):
+        x = batch['input']
+        batch_size = x.shape[0]
+
+        pooled_features = self.backbone(x)
+        pooled_features = pooled_features.view(batch_size,-1)
+
+        embeddings = self.neck(pooled_features)
+        logits = self.head(embeddings)
+
+        preds = logits.softmax(1)
+        
+        preds_conf, preds_cls = preds.max(1)
+
+        if self.training:
+            loss = self.loss_fn(logits, batch['target'].long())
+            target = batch['target']
+        else:
+            target = None
+            loss = torch.zeros((1),device=self.device)
+        return {'loss': loss, "target": target, "preds_conf":preds_conf,'preds_cls':preds_cls,
+                'embeddings': embeddings
+                }
+
+
 class DOLGArcFaceModel(SimpleArcFaceModel):
     def __init__(self, backbone_name, backbone_pretrained=None, 
                 n_classes=10000, embedding_size=512, global_pool='gem', margin=0.5, scale=64,
@@ -221,7 +295,7 @@ class DOLGArcFaceModel(SimpleArcFaceModel):
                 self.backbone = timm.create_model(backbone_name, pretrained=backbone_pretrained,
                                                 features_only=True, num_classes=0,
                                                 global_pool='')
-            elif type(backbone_pretrained) == bool:
+            elif type(backbone_pretrained) == str:
                 self.backbone = timm.create_model(backbone_name, pretrained=False,
                                                 features_only=True, num_classes=0,
                                                 global_pool='')
@@ -293,3 +367,108 @@ class DOLGArcFaceModel(SimpleArcFaceModel):
                 'embeddings': x_emb
                 }
     
+class HybridSwinTransformer(nn.Module):
+    def __init__(self, backbone_name, embedder_name, backbone_pretrained=None, 
+                embedder_pretrained=None, embedder_blocks=[1], image_size=768,
+                n_classes=10000, embedding_size=512, global_pool='gem', margin=0.5, scale=64,
+                sub_center=False, adaptive_margin=False, arcface_m_x = 0.45,
+                arcface_m_y = 0.05, label_frequency=None, freeze_backbone_head=False, device='cuda:0'):
+
+        self.backbone = timm.create_model(backbone_name, 
+                                            pretrained=backbone_pretrained, 
+                                            num_classes=0, 
+                                            in_chans=self.cfg.in_channels)
+
+        if backbone_pretrained is not None:
+            if type(backbone_pretrained) == bool:
+                self.backbone = timm.create_model(backbone_name, pretrained=backbone_pretrained,
+                                                num_classes=0,
+                                                global_pool='')
+            elif type(backbone_pretrained) == str:
+                self.backbone = timm.create_model(backbone_name, pretrained=False,
+                                                 num_classes=0,
+                                                global_pool='')
+                self.backbone.load_state_dict(torch.load(backbone_pretrained))
+                print('Loaded pretrained backbone:', backbone_pretrained)
+
+        if embedder_pretrained is not None:
+            if type(embedder_pretrained) == bool:
+                embedder = timm.create_model(embedder_name, 
+                                        pretrained=embedder_pretrained, 
+                                        in_chans=3,
+                                        features_only=True, out_indices=embedder_blocks)
+            if type(embedder_pretrained) == str:
+                embedder = timm.create_model(embedder_name, 
+                                        pretrained=False, 
+                                        in_chans=3,
+                                        features_only=True, out_indices=embedder_blocks)
+                embedder.load_state_dict(torch.load(embedder_pretrained))
+                print('Loaded pretrained embedder:', embedder_pretrained)
+        
+        print('Embedder output blocks:', embedder_blocks)
+        self.backbone.patch_embed = HybridEmbed(embedder,img_size=image_size, 
+                                              patch_size=1, 
+                                              feature_size=self.backbone.patch_embed.grid_size, 
+                                              in_chans=3, 
+                                              embed_dim=self.backbone.embed_dim)
+
+        if global_pool == 'gem':
+            self.global_pool = GeM(p_trainable=True)
+        elif global_pool == 'avg':
+            self.global_pool = nn.AdaptiveAvgPool2d(1)
+        self.embedding_size = embedding_size
+
+        self.neck = nn.Sequential(
+                nn.Linear(self.backbone.num_features, self.embedding_size, bias=True),
+                nn.BatchNorm1d(self.embedding_size),
+                torch.nn.PReLU()
+            )
+
+        if sub_center:
+            self.head = ArcMarginProduct_subcenter(self.embedding_size, self.n_classes)
+        else:
+            self.head = ArcMarginProduct(self.embedding_size, self.n_classes)
+
+        if adaptive_margin:
+            if label_frequency is None:
+                raise ValueError('when adaptive_margin is True, please parse label_frequency of the dataset')
+            tmp = np.sqrt(1 / np.sqrt(label_frequency.sort_index().values))
+            init_margins = (tmp - tmp.min()) / (tmp.max() - tmp.min()) * arcface_m_x + arcface_m_y
+            self.loss_fn = ArcFaceLossAdaptiveMargin(margins=init_margins,
+                                                        n_classes=n_classes, s=scale,
+                                                        device=device)
+        else:
+            self.loss_fn = ArcFaceLoss(scale, margin, device=device)
+
+        if freeze_backbone_head:
+            for name, param in self.named_parameters():
+                if not 'patch_embed' in name:
+                    param.requires_grad = False
+
+        # to device
+        self.device = device
+        self.to(self.device)
+
+
+    def forward(self, batch):
+
+        x = batch['input']
+
+        x = self.backbone(x)
+
+        x_emb = self.neck(x)
+
+        logits = self.head(x_emb)
+        preds = logits.softmax(1)
+        
+        preds_conf, preds_cls = preds.max(1)
+
+        if self.training:
+            loss = self.loss_fn(logits, batch['target'].long())
+            target = batch['target']
+        else:
+            target = None
+            loss = torch.zeros((1),device=self.device)
+        return {'loss': loss, "target": target, "preds_conf":preds_conf,'preds_cls':preds_cls,
+                'embeddings': x_emb
+                }
