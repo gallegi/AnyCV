@@ -376,11 +376,6 @@ class HybridSwinTransformer(nn.Module):
         
         super(HybridSwinTransformer, self).__init__()
 
-        self.backbone = timm.create_model(backbone_name, 
-                                            pretrained=backbone_pretrained, 
-                                            num_classes=0, 
-                                            in_chans=self.cfg.in_channels)
-
         if backbone_pretrained is not None:
             if type(backbone_pretrained) == bool:
                 self.backbone = timm.create_model(backbone_name, pretrained=backbone_pretrained,
