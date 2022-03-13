@@ -1,13 +1,58 @@
+"""Contains class definition of some baseline metric learning models."""
+
 import math
+import numpy as np
 import torch
-from torch import nn 
+from torch import nn
 import torch.nn.functional as F
 import timm
-import numpy as np
 from timm.models.vision_transformer_hybrid import HybridEmbed    
 from metric_learning.loss import ArcFaceLoss, ArcFaceLossAdaptiveMargin
 
-class ArcMarginProduct_subcenter(nn.Module):
+class ArcMarginProduct(nn.Module):
+    """ArcMarginProduct operation.
+
+    Calculates the cosine of the angle between the embeddings and their
+    corresponding centers (represented by the weight matrix).
+    
+    Attributes:
+        weight: initialized weight matrix to map embeddings to output classes
+        k: Number of subcenter for each class
+        out_features: number of output classes
+    """
+    def __init__(self, in_features, out_features):
+        super().__init__()
+        self.weight = nn.Parameter(torch.Tensor(out_features, in_features))
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        """Reinitializes the weight matrix using xavier_uniform_"""
+        nn.init.xavier_uniform_(self.weight)
+
+    def forward(self, features):
+        """Perform cosine calculation
+        
+        Args:
+            features: embedding vectors of current minibatch
+
+        Returns:
+            A vector of cosine between embeddings and their corresponding centers
+            (represented by the weight matrix)
+        """
+        cosine = F.linear(F.normalize(features), F.normalize(self.weight))
+        return cosine
+
+class ArcMarginProductSubcenter(nn.Module):
+    """ArcMarginProduct operation with subcenter configuration.
+
+    Calculates the cosine of the angle between the embeddings and their
+    corresponding centers (represented by the weight matrix), also use subcenters.
+    
+    Attributes:
+        weight: initialized weight matrix to map embeddings to output classes
+        k: Number of subcenter for each class
+        out_features: number of output classes
+    """
     def __init__(self, in_features, out_features, k=3):
         super().__init__()
         self.weight = nn.Parameter(torch.FloatTensor(out_features*k, in_features))
@@ -16,34 +61,45 @@ class ArcMarginProduct_subcenter(nn.Module):
         self.out_features = out_features
         
     def reset_parameters(self):
+        """Reinitialize the weight matrix using uniform_."""
         stdv = 1. / math.sqrt(self.weight.size(1))
         self.weight.data.uniform_(-stdv, stdv)
         
     def forward(self, features):
+        """Performs cosine calculation.
+        
+        Args:
+            features: embedding vectors of current minibatch
+
+        Returns:
+            A vector of cosine between embeddings and their corresponding centers
+            (represented by the weight matrix)
+        """
         cosine_all = F.linear(F.normalize(features), F.normalize(self.weight))
         cosine_all = cosine_all.view(-1, self.out_features, self.k)
         cosine, _ = torch.max(cosine_all, dim=2)
-        return cosine  
-
-class ArcMarginProduct(nn.Module):
-    def __init__(self, in_features, out_features):
-        super().__init__()
-        self.weight = nn.Parameter(torch.Tensor(out_features, in_features))
-        self.reset_parameters()
-
-    def reset_parameters(self):
-        nn.init.xavier_uniform_(self.weight)
-        # stdv = 1. / math.sqrt(self.weight.size(1))
-        # self.weight.data.uniform_(-stdv, stdv)
-
-    def forward(self, features):
-        cosine = F.linear(F.normalize(features), F.normalize(self.weight))
         return cosine
 
-def gem(x, p=3, eps=1e-6):
-    return F.avg_pool2d(x.clamp(min=eps).pow(p), (x.size(-2), x.size(-1))).pow(1./p)
+def gem(features, p=3, eps=1e-6):
+    """Performs GeM pooling.
+        
+    Args:
+        features: A matrix of shape (n, num_channels, H, W), a feature map outputed by a convolutional layer
+        p: the exponential number
+        eps: small number to prevent the base of A^x not to equal 0
+
+    Returns:
+        A vector of shape (n, num_channels) resulted from the pooling action to squeeze the W and H dimension
+    """
+    return F.avg_pool2d(features.clamp(min=eps).pow(p), (features.size(-2), features.size(-1))).pow(1./p)
 
 class GeM(nn.Module):
+    """Performs GeM pooling as in the paper: https://arxiv.org/pdf/1711.02512.pdf.
+    
+        Attributes:
+            p: the exponential number
+            eps: small number to prevent the base of A^x not to equal 0
+    """
     def __init__(self, p=3, eps=1e-6, p_trainable=False):
         super(GeM,self).__init__()
         if p_trainable:
@@ -53,12 +109,24 @@ class GeM(nn.Module):
         self.eps = eps
 
     def forward(self, x):
-        ret = gem(x, p=self.p, eps=self.eps)   
+        """Performs GeM pooling."""
+        ret = gem(x, p=self.p, eps=self.eps)
         return ret
+
     def __repr__(self):
         return self.__class__.__name__ + '(' + 'p=' + '{:.4f}'.format(self.p.data.tolist()[0]) + ', ' + 'eps=' + str(self.eps) + ')'
 
 class MultiAtrousModule(nn.Module):
+    """MultiAtrousModule implemented following: https://arxiv.org/pdf/2108.02927.pdf.
+        
+        Apply 3 different dilational convolution to extract features
+
+        Attributes:
+            d0: the 1st dilational convolution
+            d1: the 2nd dilational convolution
+            d2: the 3rd dilational convolution
+            relu: ReLU activation function
+        """
     def __init__(self, in_chans, out_chans, dilations):
         super(MultiAtrousModule, self).__init__()
         
@@ -69,7 +137,7 @@ class MultiAtrousModule(nn.Module):
         self.relu = nn.ReLU()
         
     def forward(self,x):
-        
+        """Performs the convolution operations and concatenates the outputs."""
         x0 = self.d0(x)
         x1 = self.d1(x)
         x2 = self.d2(x)
@@ -79,7 +147,19 @@ class MultiAtrousModule(nn.Module):
         return x
 
 class SpatialAttention2d(nn.Module):
+    """Spatial attention operration on the input feature map.
+    
+    Attributes:
+        conv1, conv2: convolution layers
+        bn1: batch norm layer
+        act1: relu activation
+        softplus: an activation layer (smoothen version of ReLU)
+    """
     def __init__(self, in_c):
+        """
+            Args:
+                in_c: input channel of the feature map
+        """
         super(SpatialAttention2d, self).__init__()
         self.conv1 = nn.Conv2d(in_c, 1024, 1, 1)
         self.bn = nn.BatchNorm2d(1024)
@@ -88,29 +168,37 @@ class SpatialAttention2d(nn.Module):
         self.softplus = nn.Softplus(beta=1, threshold=20) # use default setting.
 
     def forward(self, x):
-        '''
-        x : spatial feature map. (b x c x w x h)
-        att : softplus attention score 
-        '''
+        """Performs the attention map multiplication.
+            
+        Args:
+            x : spatial feature map. (b x c x w x h)
+
+        Return:
+            1, The feature map after applying attention multiplication
+            2, The attention map
+        """
         x = self.conv1(x)
         x = self.bn(x)
-        
-        feature_map_norm = F.normalize(x, p=2, dim=1)
-         
         x = self.act1(x)
         x = self.conv2(x)
+
         att_score = self.softplus(x)
+        feature_map_norm = F.normalize(x, p=2, dim=1)
         att = att_score.expand_as(feature_map_norm)
         
         x = att * feature_map_norm
-        return x, att_score   
+        return x, att_score
 
 class OrthogonalFusion(nn.Module):
+    """A module that combine local features and global features using orthogonal fusion.
+    
+    Detail can be found in: https://arxiv.org/pdf/2108.02927.pdf
+    """
     def __init__(self):
         super(OrthogonalFusion, self).__init__()
 
     def forward(self, fl, fg):
-
+        """Fuse local features and global features to a unified feature map."""
         bs, c, w, h = fl.shape
         
         fl_dot_fg = torch.bmm(fg[:,None,:],fl.reshape(bs,c,-1))
@@ -124,10 +212,46 @@ class OrthogonalFusion(nn.Module):
         return f_fused  
 
 class SimpleArcFaceModel(nn.Module):
+    """A CNN backbone classifier with default ArcFace loss function.
+    
+    The module can have various timm CNN backbone with names complying with those of timm.
+    ArcFace is included as loss function. It can either be marignal adaptive or manually configured.
+    Also, ArcFace can have subcenters
+    
+    Attributes:
+        backbone: a torch module that is created using timm api: create_model()
+        n_classes: number of classes
+        embedding_size: size of the embedding vector
+        global_pool: pooling method ('gem' or 'avg')
+        neck: a sequence of layers mapping pooled features to embeddings
+        head: 
+            ArcMarginProduct, which takes embeddings as input and calculates the logits
+            (the cosine between the embeddings and their centers)
+        loss_fn: ArcFace loss function with either adaptive margin or not
+        device: a device to create the model on
+    """
     def __init__(self, backbone_name, backbone_pretrained=None, 
                 n_classes=10000, embedding_size=512, global_pool='gem', margin=0.5, scale=64,
                 sub_center=False, adaptive_margin=False, arcface_m_x = 0.45,
                 arcface_m_y = 0.05, label_frequency=None, device='cuda:0'):
+        """
+        Args:
+            backbone_name: timm CNN backbone name
+            backbone_pretrained: 
+                either boolean to allow pretrained weights to be downloaded,
+                or string denoting the path to the saved weights in the local machine.
+            n_classes: number of classes
+            embedding_size: size of the embedding vector
+            global_pool: pooling method ('gem' or 'avg')
+            margin: ArcFace margin parameter (only matters if adaptive_margin=False)
+            scale: ArcFace scale parameter
+            sub_center: use subcenter for ArcFace instead of single center
+            adaptive_margin: whether to allow a learnable margin for ArcFace
+            arcface_m_x: # TOCOMMENT
+            arcface_m_y: # TOCOMMENT
+            label_frequency: frequency of every class in training set
+            device: a device to create the model on
+        """
         super(SimpleArcFaceModel, self).__init__()
         self.n_classes = n_classes
         
@@ -157,7 +281,7 @@ class SimpleArcFaceModel(nn.Module):
             )
 
         if sub_center:
-            self.head = ArcMarginProduct_subcenter(self.embedding_size, self.n_classes)
+            self.head = ArcMarginProductSubcenter(self.embedding_size, self.n_classes)
         else:
             self.head = ArcMarginProduct(self.embedding_size, self.n_classes)
 
@@ -177,6 +301,22 @@ class SimpleArcFaceModel(nn.Module):
         self.to(self.device)
         
     def forward(self, batch):
+        """
+        Args:
+            batch:
+                input minibatch in the form of a dictionary
+                contains either 2 keys input and target (is_training) or key input only (not is_training)
+                input shape: Nx3xHxW
+                target shape: Nxn_classes
+
+        Returns:
+            A dictionary contain those keys:
+                loss: loss between model's prediction and the target (equals to 0 if not is_training)
+                target: target of classification (None if not is_training)
+                preds_conf: confidence scores of the prediction
+                preds_cls: predicted labels of th prediction
+                embeddings: embeddings vectors
+        """
         x = batch['input']
         batch_size = x.shape[0]
 
@@ -205,10 +345,46 @@ class SimpleArcFaceModel(nn.Module):
                 }
 
 class SwinTrArcFaceModel(nn.Module):
+    """A Swin Transformer backbone classifier with default ArcFace loss function.
+    
+    The module can have various timm Swin Transformer backbone with names complying with those of timm.
+    ArcFace is included as loss function. It can either be marignal adaptive or manually configured.
+    Also, ArcFace can have subcenters
+    
+    Attributes:
+        backbone: a torch module that is created using timm api: create_model()
+        n_classes: number of classes
+        embedding_size: size of the embedding vector
+        global_pool: pooling method ('gem' or 'avg')
+        neck: a sequence of layers mapping pooled features to embeddings
+        head: 
+            ArcMarginProduct, which takes embeddings as input and calculates the logits
+            (the cosine between the embeddings and their centers)
+        loss_fn: ArcFace loss function with either adaptive margin or not
+        device: a device to create the model on
+    """
     def __init__(self, backbone_name, backbone_pretrained=None, 
                 n_classes=10000, embedding_size=512, margin=0.5, scale=64,
                 sub_center=False, adaptive_margin=False, arcface_m_x = 0.45,
                 arcface_m_y = 0.05, label_frequency=None, device='cuda:0'):
+        """
+        Args:
+            backbone_name: timm Swin Transformer backbone name
+            backbone_pretrained: 
+                either boolean to allow pretrained weights to be downloaded,
+                or string denoting the path to the saved weights in the local machine.
+            n_classes: number of classes
+            embedding_size: size of the embedding vector
+            global_pool: pooling method ('gem' or 'avg')
+            margin: ArcFace margin parameter (only matters if adaptive_margin=False)
+            scale: ArcFace scale parameter
+            sub_center: use subcenter for ArcFace instead of single center
+            adaptive_margin: whether to allow a learnable margin for ArcFace
+            arcface_m_x: # TOCOMMENT
+            arcface_m_y: # TOCOMMENT
+            label_frequency: frequency of every class in training set
+            device: a device to create the model on
+        """
         super(SwinTrArcFaceModel, self).__init__()
         self.n_classes = n_classes
         
@@ -231,7 +407,7 @@ class SwinTrArcFaceModel(nn.Module):
         self.backbone.head = nn.Identity()
 
         if sub_center:
-            self.head = ArcMarginProduct_subcenter(self.embedding_size, self.n_classes)
+            self.head = ArcMarginProductSubcenter(self.embedding_size, self.n_classes)
         else:
             self.head = ArcMarginProduct(self.embedding_size, self.n_classes)
 
@@ -251,6 +427,22 @@ class SwinTrArcFaceModel(nn.Module):
         self.to(self.device)
         
     def forward(self, batch):
+        """
+        Args:
+            batch:
+                input minibatch in the form of a dictionary
+                contains either 2 keys input and target (is_training) or key input only (not is_training)
+                input shape: Nx3xHxW
+                target shape: Nxn_classes
+
+        Returns:
+            A dictionary contain those keys:
+                loss: loss between model's prediction and the target (equals to 0 if not is_training)
+                target: target of classification (None if not is_training)
+                preds_conf: confidence scores of the prediction
+                preds_cls: predicted labels of th prediction
+                embeddings: embeddings vectors
+        """
         x = batch['input']
         batch_size = x.shape[0]
 
@@ -276,11 +468,52 @@ class SwinTrArcFaceModel(nn.Module):
 
 
 class DOLGArcFaceModel(SimpleArcFaceModel):
+    """A CNN backbone classifier with Othogonal Fusion.
+    
+    The module can have various timm CNN backbone with names complying with those of timm.
+    ArcFace is included as loss function. It can either be marignal adaptive or manually configured.
+    Also, ArcFace can have subcenters and margins can be adaptive corresponding to class frequency
+    
+    Attributes:
+        backbone: a torch module that is created using timm api: create_model()
+        n_classes: number of classes
+        embedding_size: size of the embedding vector
+        fusion_pool: pooling method applied after fusing the local features and the global ones
+        neck: a sequence of layers mapping pooled features to embeddings
+        mam: a MultiAtrousModule which performs 3 different dilation convolution operations (local branch)
+        conv_g, bn_g, act_g: a series of operations (convolution, batchnorm, activation) on global features (global branch)
+        attention2d: SpatialAttention module that extracts local features (local branch)
+        fusion: OthogonalFusion module that fuses the local and global features
+        head: 
+            ArcMarginProduct, which takes embeddings as input and calculates the logits
+            (the cosine between the embeddings and their centers)
+        loss_fn: ArcFace loss function with either adaptive margin or not
+        device: a device to create the model on
+    """
     def __init__(self, backbone_name, backbone_pretrained=None, 
                 n_classes=10000, embedding_size=512, global_pool='gem', margin=0.5, scale=64,
                 sub_center=False, adaptive_margin=False, arcface_m_x = 0.45,
                 arcface_m_y = 0.05, label_frequency=None,
                 dilations=[6,12,18], device='cuda:0'):
+        """
+        Args:
+            backbone_name: timm CNN backbone name
+            backbone_pretrained: 
+                either boolean to allow pretrained weights to be downloaded,
+                or string denoting the path to the saved weights in the local machine.
+            n_classes: number of classes
+            embedding_size: size of the embedding vector
+            global_pool: pooling method ('gem' or 'avg')
+            margin: ArcFace margin parameter (only matters if adaptive_margin=False)
+            scale: ArcFace scale parameter
+            sub_center: use subcenter for ArcFace instead of single center
+            adaptive_margin: whether to allow a learnable margin for ArcFace
+            arcface_m_x: # TOCOMMENT
+            arcface_m_y: # TOCOMMENT
+            label_frequency: frequency of every class in training set
+            dilations: a list with 3 elements denoting the dilation sizes of the 3 convolutions in MultiAtrousModule
+            device: a device to create the model on
+        """
         super(DOLGArcFaceModel, self).__init__(backbone_name, backbone_pretrained,
                                                 n_classes, embedding_size, global_pool, margin, scale, 
                                                 sub_center, adaptive_margin, arcface_m_x,
@@ -326,6 +559,22 @@ class DOLGArcFaceModel(SimpleArcFaceModel):
         self.to(self.device)
         
     def forward(self, batch):
+        """
+        Args:
+            batch:
+                input minibatch in the form of a dictionary
+                contains either 2 keys input and target (is_training) or key input only (not is_training)
+                input shape: Nx3xHxW
+                target shape: Nxn_classes
+
+        Returns:
+            A dictionary contain those keys:
+                loss: loss between model's prediction and the target (equals to 0 if not is_training)
+                target: target of classification (None if not is_training)
+                preds_conf: confidence scores of the prediction
+                preds_cls: predicted labels of th prediction
+                embeddings: embeddings vectors
+        """
         x = batch['input']
 
         x = self.backbone(x)
@@ -365,6 +614,7 @@ class DOLGArcFaceModel(SimpleArcFaceModel):
                 }
     
 class HybridSwinTransformer(nn.Module):
+    """Still in fixing, hence no comments"""
     def __init__(self, backbone_name, embedder_name, backbone_pretrained=None, 
                 embedder_pretrained=None, embedder_blocks=[1], image_size=768,
                 n_classes=10000, embedding_size=512, global_pool='gem', margin=0.5, scale=64,
@@ -406,7 +656,7 @@ class HybridSwinTransformer(nn.Module):
                                               feature_size=self.backbone.patch_embed.grid_size, 
                                               in_chans=3, 
                                               embed_dim=self.backbone.embed_dim)
-
+ 
         if global_pool == 'gem':
             self.global_pool = GeM(p_trainable=True)
         elif global_pool == 'avg':
@@ -420,7 +670,7 @@ class HybridSwinTransformer(nn.Module):
             )
 
         if sub_center:
-            self.head = ArcMarginProduct_subcenter(self.embedding_size, self.n_classes)
+            self.head = ArcMarginProductSubcenter(self.embedding_size, self.n_classes)
         else:
             self.head = ArcMarginProduct(self.embedding_size, self.n_classes)
 

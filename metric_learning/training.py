@@ -7,7 +7,20 @@ import gc
 from commons.training import AverageMeter
 
 def train_fn(dataloader,model,optimizer,scaler,device,scheduler,epoch):
-    '''Perform model training'''
+    """Performs training one epoch
+    
+    Args:
+        dataloader: a loader that fetch minibatch each time
+        model: a training model
+        optimizer: an optimizer that update the model's weight using gradients
+        scaler: a GradScaler object that scale the gradients
+        device: a device that the model performs forward and backward passes on
+        scheduler: a learning rate controller
+        epoch: the current training epoch
+
+    Returns:
+        The average loss value of the current epoch
+    """
     model.train()
     loss_score = AverageMeter()
     
@@ -43,6 +56,17 @@ def train_fn(dataloader,model,optimizer,scaler,device,scheduler,epoch):
     return loss_score.avg
 
 def get_all_embeddings(dataloader, model, device='cuda:0'):
+    """Get embedding array on the whole dataset
+
+    Args:
+        dataloader: a loader that fetch a minibatch each time
+        model: a model that map images to embedding vectors
+        device: a device that the model performs
+
+    Returns:
+        Embeddings matrix (N x emb_size) where N is the total number of images
+        and emb_size is the embeddings size
+    """
     model.eval()
     tk0 = tqdm(enumerate(dataloader), total=len(dataloader))
     all_embeddings = []
@@ -59,6 +83,20 @@ def get_all_embeddings(dataloader, model, device='cuda:0'):
     return np.concatenate(all_embeddings)
 
 def get_all_embeddings_and_predictions(dataloader, model, device='cuda:0'):
+     """Get embedding array on the whole dataset
+
+    Args:
+        dataloader: a loader that fetch a minibatch each time
+        model: a model that map images to embedding vectors
+        device: a device that the model performs
+
+    Returns:
+        A dictionary that contains those keys:
+            embeddings: Embeddings matrix (N x emb_size) where N is the total number of images
+                        and emb_size is the embeddings size
+            pred_classes: predicted class for all images (N)
+            pred_conf: corresponding confidence scores of the class prediction
+    """
     model.eval()
     tk0 = tqdm(enumerate(dataloader), total=len(dataloader))
     all_embeddings = []
